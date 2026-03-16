@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "phoneNumber": { "type": "string", "description": "User's phone number" },
+        "createdAt": { "type": "string", "format": "date", "description": "Account creation date" }
+      },
+      "required": ["uid", "phoneNumber", "createdAt"]
+    },
+    "Recipe": {
+      "title": "Recipe",
+      "description": "A saved recipe",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Recipe ID" },
+        "userId": { "type": "string", "description": "Owner's User ID" },
+        "title": { "type": "string", "description": "Recipe title" },
+        "ingredients": { "type": "array", "description": "List of ingredients" },
+        "instructions": { "type": "string", "description": "Cooking instructions" },
+        "createdAt": { "type": "string", "format": "date", "description": "Creation date" }
+      },
+      "required": ["id", "userId", "title", "ingredients", "instructions", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles"
+    },
+    "/users/{userId}/recipes/{recipeId}": {
+      "schema": { "$ref": "Recipe" },
+      "description": "User's saved recipes"
+    }
+  }
+}

@@ -1,0 +1,91 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - Firebase Auth UID
+    //   - phoneNumber: string (required) - User's phone number
+    //   - createdAt: string (required, ISO 8601) - Account creation date
+    //
+    // Collection: users/{userId}/recipes
+    // Document ID: {recipeId}
+    // Fields:
+    //   - id: string (required) - Recipe ID
+    //   - userId: string (required) - Owner's User ID
+    //   - title: string (required, max 100) - Recipe title
+    //   - ingredients: list (required, max 50) - List of ingredients
+    //   - instructions: string (required, max 2000) - Cooking instructions
+    //   - createdAt: string (required, ISO 8601) - Creation date
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function uidNotModified(userId) {
+      return !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'phoneNumber', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.phoneNumber is string && data.phoneNumber.size() > 0 &&
+             data.createdAt is string;
+    }
+
+    function isValidRecipe(data) {
+      return hasOnlyAllowedFields(['id', 'userId', 'title', 'ingredients', 'instructions', 'createdAt']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.userId is string && data.userId.size() > 0 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.ingredients is list && data.ingredients.size() <= 50 &&
+             data.instructions is string && data.instructions.size() > 0 && data.instructions.size() <= 2000 &&
+             data.createdAt is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if isOwner(userId);
+
+      match /recipes/{recipeId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidRecipe(request.resource.data);
+        allow update: if isOwner(userId) && isValidRecipe(request.resource.data) && uidNotModified(userId);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

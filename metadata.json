@@ -1,0 +1,5 @@
+{
+  "name": "RecipeVault",
+  "description": "一个支持手机号登录的个人食谱历史记录管理应用。",
+  "requestFramePermissions": ["geolocation"]
+}
