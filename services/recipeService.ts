@@ -1,10 +1,7 @@
 import { Recipe, UserPreferences } from '../types';
 import { generateRecipes as aiGenerateRecipes } from './geminiService';
-
-const getLocalUser = () => {
-    const savedUser = localStorage.getItem('chefgenie_user');
-    return savedUser ? JSON.parse(savedUser) : null;
-};
+import { db } from '../firebase';
+import { collection, getDocs, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 
 // Calculate Target Calories per meal (assuming 3 meals a day)
 const calculateTargetCalories = (prefs: UserPreferences): number => {
@@ -30,6 +27,7 @@ const calculateTargetCalories = (prefs: UserPreferences): number => {
         case '备孕': targetDailyCalories += 300; break;
         case '术后恢复': targetDailyCalories += 200; break;
         case '控制三高': targetDailyCalories -= 200; break;
+        case '维持现状':
         default: break;
     }
 
@@ -41,77 +39,123 @@ const calculateTargetCalories = (prefs: UserPreferences): number => {
     return Math.round(targetDailyCalories / 3);
 };
 
-export const getRecipesFromDB = async (prefs: UserPreferences): Promise<Recipe[]> => {
+export const getRecipesFromDB = async (prefs: UserPreferences, targetCalories: number): Promise<Recipe[]> => {
   try {
-    const user = getLocalUser();
-    const response = await fetch('/api/recipes/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ ...prefs, authorUid: user?.uid })
+    const q = query(collection(db, 'recipes'), orderBy('createdAt', 'desc'));
+    const querySnapshot = await getDocs(q);
+    
+    const recipes: Recipe[] = [];
+    querySnapshot.forEach((doc) => {
+      recipes.push({ id: doc.id, ...doc.data() } as Recipe);
     });
-    
-    const contentType = response.headers.get("content-type");
-    if (!response.ok || !contentType || contentType.indexOf("application/json") === -1) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    const recipes: Recipe[] = await response.json();
-    return recipes;
+
+    // Filter based on preferences
+    const filtered = recipes.filter(recipe => {
+      // 1. Exclude allergens
+      if (prefs.allergies && prefs.allergies.length > 0) {
+        const hasAllergen = recipe.allergens?.some((a: string) => prefs.allergies.includes(a));
+        if (hasAllergen) return false;
+      }
+      
+      // 2. Exclude disliked foods
+      if (prefs.dislikedFoods && prefs.dislikedFoods.length > 0) {
+        const hasDisliked = recipe.ingredients?.some((ing: any) => 
+          prefs.dislikedFoods.some((d: string) => ing.name.includes(d))
+        );
+        if (hasDisliked) return false;
+      }
+
+      // 3. Check prep time limit
+      const totalTime = (recipe.prepTime || 0) + (recipe.cookTime || 0);
+      if (prefs.prepTimeLimit && totalTime > prefs.prepTimeLimit) {
+        return false;
+      }
+
+      // 4. Check target calories (allow +/- 20% variance)
+      if (targetCalories && recipe.calories) {
+        const minCal = targetCalories * 0.8;
+        const maxCal = targetCalories * 1.2;
+        if (recipe.calories < minCal || recipe.calories > maxCal) {
+          return false;
+        }
+      }
+
+      // 5. Check health goal (must be in tags)
+      if (prefs.healthGoal && recipe.tags) {
+        if (!recipe.tags.includes(prefs.healthGoal)) {
+          return false;
+        }
+      }
+
+      // 6. Check diet type (must be in tags if not '无特殊')
+      if (prefs.dietType && prefs.dietType !== '无特殊' && recipe.tags) {
+        if (!recipe.tags.includes(prefs.dietType)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    // Shuffle and pick top 3
+    const shuffled = filtered.sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, 3);
   } catch (error) {
-    console.error("Error fetching recipes from SQLite:", error);
+    console.error("Error fetching recipes from Firestore:", error);
     return [];
   }
 };
 
-export const saveRecipeToDB = async (recipe: Recipe, prefs?: UserPreferences): Promise<string | null> => {
+export const saveRecipeToDB = async (recipe: Recipe): Promise<string | null> => {
     try {
-        const user = getLocalUser();
-        const response = await fetch('/api/recipes', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ ...recipe, authorUid: user?.uid, searchPrefs: prefs || recipe.searchPrefs })
-        });
+        const recipeData = {
+          ...recipe,
+          createdAt: serverTimestamp()
+        };
+        // Remove undefined id if present
+        delete recipeData.id;
         
-        const contentType = response.headers.get("content-type");
-        if (!response.ok || !contentType || contentType.indexOf("application/json") === -1) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        return data.id;
+        const docRef = await addDoc(collection(db, 'recipes'), recipeData);
+        return docRef.id;
     } catch (error) {
-        console.error("Error saving recipe to SQLite:", error);
+        console.error("Error saving recipe to Firestore:", error);
         return null;
     }
 }
 
 export const generateAndSaveRecipes = async (prefs: UserPreferences): Promise<Recipe[]> => {
+    const targetCalories = calculateTargetCalories(prefs);
+
+    // 1. Try to get from DB first
     let dbRecipes: Recipe[] = [];
     try {
-        dbRecipes = await getRecipesFromDB(prefs);
+        dbRecipes = await getRecipesFromDB(prefs, targetCalories);
     } catch (e) {
         console.warn("Failed to fetch from DB, proceeding to generate with AI:", e);
     }
     
+    // If we found enough recipes in the DB, return them
     if (dbRecipes.length >= 3) {
+        console.log("Found recipes in DB!");
         return dbRecipes;
     }
 
-    const targetCalories = calculateTargetCalories(prefs);
+    // 2. If not enough, generate using AI
+    console.log("Not enough recipes in DB, generating with AI...");
+    
+    // Pass the target calories to the AI service
     const generatedRecipes = await aiGenerateRecipes(prefs, targetCalories);
 
+    // 3. Save the newly generated recipes to the DB for future use
     const savedRecipes = await Promise.all(generatedRecipes.map(async (recipe) => {
+        // Ensure tags exist
         if (!recipe.tags) recipe.tags = [];
         if (prefs.healthGoal) recipe.tags.push(prefs.healthGoal);
         if (prefs.dietType !== '无特殊') recipe.tags.push(prefs.dietType);
         
         let id = undefined;
         try {
-            const savedId = await saveRecipeToDB(recipe, prefs);
+            const savedId = await saveRecipeToDB(recipe);
             if (savedId) id = savedId;
         } catch (e) {
             console.warn("Failed to save recipe to DB, skipping save.", e);
@@ -120,26 +164,4 @@ export const generateAndSaveRecipes = async (prefs: UserPreferences): Promise<Re
     }));
 
     return savedRecipes;
-};
-
-export const getHistoryRecipes = async (): Promise<Recipe[]> => {
-    const user = getLocalUser();
-    if (!user) throw new Error('User not authenticated');
-
-    try {
-        const response = await fetch('/api/recipes/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ authorUid: user.uid })
-        });
-        
-        const contentType = response.headers.get("content-type");
-        if (!response.ok || !contentType || contentType.indexOf("application/json") === -1) {
-            throw new Error('Failed to fetch history');
-        }
-        return await response.json();
-    } catch (error) {
-        console.error("Error fetching history from SQLite:", error);
-        return [];
-    }
 };

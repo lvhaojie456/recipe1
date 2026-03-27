@@ -1,56 +1,10 @@
-import { UserPreferences, Recipe, ChatMessage } from "../types";
+import { GoogleGenAI, Type, Chat } from "@google/genai";
+import { UserPreferences, Recipe } from "../types";
 
-const SILICONFLOW_API_URL = 'https://api.siliconflow.cn/v1/chat/completions';
-const MODEL_NAME = 'deepseek-ai/DeepSeek-V3.2';
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// WARNING: Hardcoded API key as explicitly requested by the user for this prototype.
-// This exposes the key to the client-side browser.
-let currentApiKey: string | null = 'sk-renqlyfpyazhlvwaqebqqzwlxtvloikskhhxmgohhnuihjrk';
-
-export const setApiKey = (key: string) => {
-    currentApiKey = key;
-};
-
-const getApiKey = () => {
-    return currentApiKey || 'sk-renqlyfpyazhlvwaqebqqzwlxtvloikskhhxmgohhnuihjrk';
-};
-
-async function callSiliconFlow(messages: any[], expectJson: boolean = false) {
-    const apiKey = getApiKey();
-    const body: any = {
-        model: MODEL_NAME,
-        messages,
-    };
-
-    if (expectJson) {
-        body.response_format = { type: "json_object" };
-    }
-
-    const response = await fetch(SILICONFLOW_API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || `API Error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    let content = data.choices[0].message.content;
-
-    if (expectJson) {
-        // Handle markdown code blocks if the model still outputs them
-        content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        return JSON.parse(content);
-    }
-
-    return content;
-}
+// Keep a reference to the chat session
+let chatSession: Chat | null = null;
 
 // Helper to construct BMI string
 const getBmiInfo = (prefs: UserPreferences) => {
@@ -66,6 +20,77 @@ const getBmiInfo = (prefs: UserPreferences) => {
     return bmiInfo;
 };
 
+// Define Schema centrally to reuse
+const RECIPE_SCHEMA = {
+    type: Type.ARRAY,
+    items: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        description: { type: Type.STRING },
+        cuisine: { type: Type.STRING, description: "Style of cooking, inferred from location" },
+        prepTime: { type: Type.NUMBER },
+        cookTime: { type: Type.NUMBER },
+        difficulty: { type: Type.STRING },
+        calories: { type: Type.NUMBER },
+        protein: { type: Type.NUMBER },
+        carbs: { type: Type.NUMBER },
+        fats: { type: Type.NUMBER },
+        matchReason: { type: Type.STRING, description: "Detailed reason linking BMI and Location to recipe" },
+        authorUid: { type: Type.STRING },
+        tags: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        allergens: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        ingredients: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              amount: { type: Type.STRING },
+            }
+          }
+        },
+        instructions: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        knowledgeGraph: {
+          type: Type.OBJECT,
+          properties: {
+              nodes: {
+                  type: Type.ARRAY,
+                  items: {
+                      type: Type.OBJECT,
+                      properties: {
+                          id: { type: Type.STRING },
+                          label: { type: Type.STRING },
+                          type: { type: Type.STRING, enum: ['Root', 'Ingredient', 'Effect', 'BodyCondition', 'LocationFactor'] }
+                      }
+                  }
+              },
+              links: {
+                  type: Type.ARRAY,
+                  items: {
+                      type: Type.OBJECT,
+                      properties: {
+                          source: { type: Type.STRING },
+                          target: { type: Type.STRING },
+                          label: { type: Type.STRING }
+                      }
+                  }
+              }
+          }
+        }
+      }
+    }
+  };
+
 export const getDishImageUrl = (title: string, cuisine: string): string => {
     // Simple hash function to get a deterministic number
     let hash = 0;
@@ -79,104 +104,185 @@ export const getDishImageUrl = (title: string, cuisine: string): string => {
 };
 
 export const generateRecipes = async (prefs: UserPreferences, targetCalories: number): Promise<Recipe[]> => {
-  const prompt = `
+  const model = "gemini-3-flash-preview";
+  
+  const bmiInfo = getBmiInfo(prefs);
+
+    const prompt = `
     你是一位结合了现代营养学和中医智慧的顶级行政总厨及健康专家。
     请根据用户的详细健康档案，生成 3 个独特的个性化食谱。
     
     【用户档案】
     1. 生理参数: 性别 ${prefs.gender}, 年龄 ${prefs.age}, 身高 ${prefs.height}cm, 体重 ${prefs.weight}kg, 活动量 ${prefs.activityLevel}, 目标 ${prefs.healthGoal}
-       -> 用户的 BMI 为 ${((prefs.weight) / (Math.pow(prefs.height / 100, 2))).toFixed(1)}。请根据 BMI 状态（偏瘦/正常/超重/肥胖）精准调整营养配比。
+       -> ${bmiInfo}
        -> 建议单餐热量目标: 约 ${targetCalories} kcal
-    2. 地理位置: ${prefs.location || '未知'}
-       -> 请根据用户所在位置推荐当地、应季的食材。地理位置对食谱的影响应大于一般的“菜系偏好”。
-    3. 健康禁忌: 过敏原 [${prefs.allergies.join(', ') || '无'}], 慢性病 [${prefs.chronicDiseases.join(', ') || '无'}], 服药情况 [${prefs.medications || '无'}]
-       -> 绝对红线：食谱中绝对不能包含过敏原。如果有慢性病（如糖尿病），必须低GI；如果有高血压，必须低钠。
-    4. 饮食偏好: 口味 [${prefs.flavorPreferences.join(', ') || '无'}], 饮食流派 [${prefs.dietType}], 厌恶食物 [${prefs.dislikedFoods.join(', ') || '无'}]
-       -> 绝对红线：食谱中绝对不能包含厌恶食物。
-    5. 生活方式: 厨艺 [${prefs.cookingSkill}], 备餐时间限制 [${prefs.prepTimeLimit}分钟], 预算 [${prefs.budget}], 用餐场景 [${prefs.diningContext}]
+    2. 健康禁忌: 过敏原 [${prefs.allergies.join(', ') || '无'}], 慢性病 [${prefs.chronicDiseases.join(', ') || '无'}], 服药情况 [${prefs.medications || '无'}]
+    3. 饮食偏好: 口味 [${prefs.flavorPreferences.join(', ') || '无'}], 饮食流派 [${prefs.dietType}], 厌恶食物 [${prefs.dislikedFoods.join(', ') || '无'}]
+    4. 生活方式: 厨艺 [${prefs.cookingSkill}], 备餐时间限制 [${prefs.prepTimeLimit}分钟], 预算 [${prefs.budget}], 用餐场景 [${prefs.diningContext}]
 
     **核心要求：**
-    1. **精准推荐**：食谱必须严格遵守上述红线（无过敏原、无厌恶食物、符合时间限制）。
-    2. **BMI与位置导向**：比起用户选择的“菜系”，更应优先考虑 BMI 对应的营养需求和地理位置对应的应季食材。
-    3. **知识图谱数据**：对于每个食谱，必须生成一个微型“知识图谱(Knowledge Graph)”数据结构。
-       - 节点(Node)类型应包括：Root(食谱名), Ingredient(核心食材), Effect(功效/作用), BodyCondition(针对的身体状况), LocationFactor(地理/环境因素)。
-       - 连线(Link)应描述它们之间的逻辑关系。
-    4. **标签与过敏原**：在 tags 数组中放入口味、流派、适合的慢性病等标签。在 allergens 数组中列出该菜品可能含有的常见过敏原（如果有的话，但绝不能是用户过敏的）。
-    5. **中文输出**：所有内容必须使用简体中文。
-    
-    请严格返回 JSON 数组格式，不要包含任何其他文本。
-    JSON 结构示例：
-    [
-      {
-        "title": "食谱名称",
-        "description": "描述",
-        "cuisine": "菜系",
-        "prepTime": 10,
-        "cookTime": 20,
-        "difficulty": "简单",
-        "calories": 500,
-        "protein": 30,
-        "carbs": 40,
-        "fats": 15,
-        "matchReason": "推荐理由",
-        "tags": ["标签1", "标签2"],
-        "allergens": ["可能含有的过敏原"],
-        "ingredients": [{ "name": "食材", "amount": "用量" }],
-        "instructions": ["步骤1", "步骤2"],
-        "knowledgeGraph": {
-          "nodes": [{ "id": "1", "label": "节点名", "type": "Root" }],
-          "links": [{ "source": "1", "target": "2", "label": "关系" }]
-        }
-      }
-    ]
+    1. **精准营养推算**：首先，你必须在内部逻辑中根据用户的身高、体重、年龄、性别和活动量，推算出该用户一天所需的总热量（TDEE），以及蛋白质、脂肪、碳水化合物、维生素等核心营养素的每日推荐摄入量。
+    2. **科学推荐理由**：在每道菜的 \`matchReason\` 和 \`description\` 中，**必须明确写出**你推算出的该用户每日营养需求（例如：“根据您的身高体重，您每日需要约XX克蛋白质、XX克脂肪...”），并详细解释这道菜的营养成分（蛋白质、碳水、脂肪等）是如何精确匹配并满足这些身体需求的。这是推荐这道菜的最核心理由。
+    3. **精准推荐**：食谱必须严格遵守上述红线（无过敏原、无厌恶食物、符合时间限制）。
+    4. **营养达标**：每道菜的热量应尽量接近 ${targetCalories} kcal，并在 \`protein\`, \`carbs\`, \`fats\` 字段中填入准确的克数。
+    5. **知识图谱数据**：生成微型“知识图谱(Knowledge Graph)”数据结构。
+    6. **中文输出**：所有内容必须使用简体中文。
   `;
 
   try {
-    const messages = [{ role: 'user', content: prompt }];
-    return await callSiliconFlow(messages, true) as Recipe[];
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: RECIPE_SCHEMA
+      }
+    });
+
+    const jsonText = response.text;
+    if (!jsonText) {
+      throw new Error("No data returned from Gemini");
+    }
+    
+    return JSON.parse(jsonText) as Recipe[];
   } catch (error) {
-    console.error("SiliconFlow API Error:", error);
+    console.error("Gemini API Error:", error);
     throw error;
   }
 };
 
 export const refineRecipes = async (prefs: UserPreferences, instruction: string): Promise<Recipe[]> => {
+    const model = "gemini-3-flash-preview";
+
+    const bmiInfo = getBmiInfo(prefs);
+
     const prompt = `
       你是一位顶级健康大厨。你之前根据用户的详细档案生成了一份菜单。
       现在，用户对菜单提出了**修改意见**。请根据新的指令，**重新生成** 3 个全新的食谱。
       
       【用户档案】
+      - 生理参数: ${bmiInfo}
       - 目标: ${prefs.healthGoal}
       - 禁忌: 过敏原 [${prefs.allergies.join(', ') || '无'}], 厌恶食物 [${prefs.dislikedFoods.join(', ') || '无'}]
   
       **用户的新指令/修改意见**: "${instruction}"
       
       **核心要求：**
-      1. 必须严格遵守用户的新指令。
-      2. 仍然不能偏离健康的底线（绝不能包含过敏原和厌恶食物）。
-      3. 必须生成包含 KnowledgeGraph 的完整数据结构。
-      4. 必须使用简体中文。
-      
-      请严格返回 JSON 数组格式，不要包含任何其他文本。参考之前的 JSON 结构。
+      1. **精准营养推算**：根据用户的身高、体重、年龄等，推算其每日所需的蛋白质、脂肪、碳水化合物等营养素。在 \`matchReason\` 和 \`description\` 中明确说明这些计算结果，并解释新食谱如何满足这些需求。
+      2. 必须严格遵守用户的新指令。
+      3. 仍然不能偏离健康的底线（绝不能包含过敏原和厌恶食物），并考虑用户的 BMI 状况。
+      4. 必须生成包含 KnowledgeGraph 的完整数据结构。
+      5. 必须使用简体中文。
     `;
   
     try {
-      const messages = [{ role: 'user', content: prompt }];
-      return await callSiliconFlow(messages, true) as Recipe[];
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: RECIPE_SCHEMA
+        }
+      });
+  
+      const jsonText = response.text;
+      if (!jsonText) throw new Error("No data");
+      return JSON.parse(jsonText) as Recipe[];
     } catch (error) {
-      console.error("SiliconFlow Refine Error:", error);
+      console.error("Gemini Refine Error:", error);
       throw error;
+    }
+};
+
+export const generateHealthAdvice = async (prefs: UserPreferences, recipes: Recipe[]): Promise<string> => {
+    const model = "gemini-3-flash-preview";
+    const bmiInfo = getBmiInfo(prefs);
+    const recipeNames = recipes.map(r => r.title).join('、');
+
+    const prompt = `
+      你是一位专业的健康顾问。用户刚刚生成了一份专属食谱。
+      【用户数据】
+      - 生理参数: ${bmiInfo}
+      - 目标: ${prefs.healthGoal}
+      - 慢性病: ${prefs.chronicDiseases.join(', ')}
+      【本次食谱】
+      ${recipeNames}
+
+      请根据以上信息，给用户写一段专业、详尽的健康建议（约200字）。
+      必须包含以下内容：
+      1. 简述根据用户的身高、体重、年龄等推算出的每日营养需求（热量、蛋白质、碳水、脂肪等）。
+      2. 解释为什么推荐的食谱组合是合理的，它们是如何精确满足这些身体需求的。
+      3. 重点指出他们当前的身体状况（如BMI偏高/偏低）需要注意什么，以及这份食谱将如何帮助他们达成目标。
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: prompt,
+        });
+        return response.text || "保持健康饮食，规律作息。";
+    } catch (error) {
+        console.error("Gemini Advice Error:", error);
+        return "保持健康饮食，规律作息，祝您身体健康！";
+    }
+};
+
+export const generateTrendAdvice = async (historyData: any[]): Promise<string> => {
+    const model = "gemini-3-flash-preview";
+    
+    // Format history data for the prompt (already oldest to newest)
+    const historySummary = historyData.map((record, index) => {
+        const date = record.createdAt?.toDate ? record.createdAt.toDate().toLocaleDateString() : `记录 ${index + 1}`;
+        const weight = record.preferences.weight;
+        const bmi = record.preferences.bmi || '未知';
+        const goal = record.preferences.healthGoal;
+        const recipes = record.recipes.map((r: any) => r.title).join('、');
+        return `[${date}] 体重: ${weight}kg, BMI: ${bmi}, 目标: ${goal}, 生成食谱: ${recipes}`;
+    }).join('\n');
+
+    const prompt = `
+      你是一位专业的健康顾问和营养师。用户正在查看他们的"健康档案"历史记录。
+      以下是用户最近几次生成食谱时的身体数据和历史记录（按时间顺序，从旧到新）：
+      
+      ${historySummary}
+
+      请根据这些历史数据，给用户写一段专业、详尽的**阶段性健康趋势分析与建议**（约300字）。
+      必须包含以下内容：
+      1. **趋势分析**：分析用户体重、BMI的变化趋势（如果有变化），或者指出他们坚持记录的习惯。
+      2. **饮食回顾**：结合他们过去生成的食谱类型和健康目标，评价他们的饮食方向是否正确。
+      3. **下一步建议**：基于当前的趋势，为他们接下来的饮食和生活方式提供具体的、可操作的建议（例如：是否需要调整热量、增加某种营养素、或者改变运动量）。
+      4. 语气要鼓励、专业、充满关怀。
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: prompt,
+        });
+        return response.text || "保持健康饮食，规律作息，继续记录您的健康数据！";
+    } catch (error) {
+        console.error("Gemini Trend Advice Error:", error);
+        return "保持健康饮食，规律作息，继续记录您的健康数据！";
     }
 };
 
 export const chatWithChef = async (
     message: string, 
-    history: ChatMessage[],
     context: { prefs?: UserPreferences, recipe?: Recipe }
 ): Promise<string> => {
-    
-    let contextPrompt = "你是一位专业、友好且富有中医智慧的营养师和私人大厨。请根据用户的身体情况、健康目标以及他们正在查看的食谱来回答问题。你的回答应当简明扼要，具有指导意义。\n";
-    
+    const model = "gemini-3-flash-preview";
+
+    // Initialize chat session if it doesn't exist
+    if (!chatSession) {
+        chatSession = ai.chats.create({
+            model: model,
+            config: {
+                systemInstruction: "你是一位专业、友好且富有中医智慧的营养师和私人大厨。请根据用户的身体情况、健康目标以及他们正在查看的食谱来回答问题。你的回答应当简明扼要，具有指导意义。",
+            }
+        });
+    }
+
+    let contextPrompt = "";
     if (context.recipe) {
         contextPrompt += `\n[当前上下文 - 用户正在查看食谱]\n标题: ${context.recipe.title}\n描述: ${context.recipe.description}\n推荐理由: ${context.recipe.matchReason}\n\n`;
     }
@@ -185,54 +291,13 @@ export const chatWithChef = async (
         contextPrompt += `\n[当前上下文 - 用户资料]\n目标: ${context.prefs.healthGoal}\n禁忌: ${context.prefs.allergies.join(',')}\n\n`;
     }
 
-    const messages = [
-        { role: 'system', content: contextPrompt },
-        ...history.map(msg => ({
-            role: msg.role === 'model' ? 'assistant' : 'user',
-            content: msg.text
-        })),
-        { role: 'user', content: message }
-    ];
+    const fullMessage = `${contextPrompt}用户问题: ${message}`;
 
     try {
-        return await callSiliconFlow(messages, false) as string;
+        const result = await chatSession.sendMessage({ message: fullMessage });
+        return result.text || "抱歉，我走神了，请再说一遍。";
     } catch (e) {
         console.error("Chat Error", e);
         return "网络连接似乎有点问题，请稍后再试。";
     }
 }
-
-export const analyzeHealthTrends = async (history: Recipe[]): Promise<string> => {
-    const historyData = history.map(r => ({
-        date: r.createdAt,
-        prefs: r.searchPrefs,
-        recipeTitle: r.title
-    }));
-
-    const prompt = `
-      你是一位顶级健康管理专家、数据分析师和资深营养学家。
-      以下是用户过去一段时间内的饮食偏好、身体参数（包括 BMI）和地理位置的历史记录。
-      请利用你的 AI 分析能力，结合医学知识和大数据趋势，提供一份极具洞察力的健康趋势报告。
-      
-      【历史记录】
-      ${JSON.stringify(historyData, null, 2)}
-      
-      【分析要求】
-      1. **身体参数深度分析**：分析用户的体重、BMI 等生理参数的变化趋势。如果 BMI 持续偏高或偏低，请给出医学层面的解释。
-      2. **环境与地理因素**：结合用户所在位置的历史变化（如有），分析环境因素（如气候、当地饮食习惯）对用户健康的影响。
-      3. **饮食偏好与营养缺口**：观察用户选择食谱的规律，指出其可能存在的微量元素缺乏或宏量营养素失衡。
-      4. **AI 预测与预警**：基于历史数据，预测如果保持现状，用户未来 3-6 个月的健康状态。针对潜在的慢性病风险给出预警。
-      5. **知识图谱式建议**：请用逻辑严密的语言描述建议，就像在构建一个知识图谱。例如：“因为 A（环境/习惯），导致 B（身体反应），所以建议 C（行动）”。
-      6. **个性化行动计划**：提供未来 2 周的阶梯式改进建议。
-      7. **语气**：权威、精准、富有前瞻性。
-      8. **语言**：简体中文。
-    `;
-
-    try {
-        const messages = [{ role: 'user', content: prompt }];
-        return await callSiliconFlow(messages, false) as string;
-    } catch (error) {
-        console.error("Health Analysis Error:", error);
-        return "分析过程中出现错误，请稍后再试。";
-    }
-};

@@ -2,7 +2,6 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
     // ===============================================================
     // Assumed Data Model
     // ===============================================================
@@ -10,19 +9,41 @@ service cloud.firestore {
     // Collection: users
     // Document ID: {userId}
     // Fields:
-    //   - uid: string (required) - Firebase Auth UID
-    //   - phoneNumber: string (required) - User's phone number
-    //   - createdAt: string (required, ISO 8601) - Account creation date
+    //   - phoneNumber: string (required)
+    //   - createdAt: timestamp (required, immutable)
+    //   - height: number (optional, cm)
+    //   - weight: number (optional, kg)
+    //   - bmi: number (optional)
     //
-    // Collection: users/{userId}/recipes
+    // Collection: users/{userId}/history
+    // Document ID: {historyId}
+    // Fields:
+    //   - createdAt: timestamp (required)
+    //   - preferences: map (required)
+    //   - recipes: list (required)
+    //   - healthAdvice: string (required)
+    //
+    // Collection: recipes
     // Document ID: {recipeId}
     // Fields:
-    //   - id: string (required) - Recipe ID
-    //   - userId: string (required) - Owner's User ID
-    //   - title: string (required, max 100) - Recipe title
-    //   - ingredients: list (required, max 50) - List of ingredients
-    //   - instructions: string (required, max 2000) - Cooking instructions
-    //   - createdAt: string (required, ISO 8601) - Creation date
+    //   - title: string (required)
+    //   - description: string (required)
+    //   - cuisine: string (required)
+    //   - prepTime: number (required)
+    //   - cookTime: number (required)
+    //   - difficulty: string (required)
+    //   - calories: number (required)
+    //   - protein: number (required)
+    //   - carbs: number (required)
+    //   - fats: number (required)
+    //   - ingredients: list (required)
+    //   - instructions: list (required)
+    //   - matchReason: string (required)
+    //   - knowledgeGraph: map (required)
+    //   - tags: list (required)
+    //   - allergens: list (optional)
+    //   - authorUid: string (optional)
+    //   - createdAt: timestamp (optional)
     //
     // ===============================================================
 
@@ -30,62 +51,82 @@ service cloud.firestore {
     // Helper Functions
     // ===============================================================
     function isAuthenticated() {
-      return request.auth != null;
+       return request.auth != null;
     }
-
+    
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+       return isAuthenticated() && request.auth.uid == userId;
     }
-
+    
     function hasRequiredFields(fields) {
-      return request.resource.data.keys().hasAll(fields);
+       return request.resource.data.keys().hasAll(fields);
     }
-
+    
     function hasOnlyAllowedFields(fields) {
       return request.resource.data.keys().hasOnly(fields);
-    }
-
-    function uidNotModified(userId) {
-      return !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId;
     }
 
     // ===============================================================
     // Domain Validators
     // ===============================================================
-
-    function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'phoneNumber', 'createdAt']) &&
-             data.uid is string && data.uid.size() > 0 &&
-             data.phoneNumber is string && data.phoneNumber.size() > 0 &&
-             data.createdAt is string;
+    function isValidUser() {
+      return hasOnlyAllowedFields(['phoneNumber', 'createdAt', 'height', 'weight', 'bmi']) &&
+             request.resource.data.phoneNumber is string &&
+             request.resource.data.createdAt is timestamp &&
+             (!('height' in request.resource.data) || request.resource.data.height is number) &&
+             (!('weight' in request.resource.data) || request.resource.data.weight is number) &&
+             (!('bmi' in request.resource.data) || request.resource.data.bmi is number);
     }
 
-    function isValidRecipe(data) {
-      return hasOnlyAllowedFields(['id', 'userId', 'title', 'ingredients', 'instructions', 'createdAt']) &&
-             data.id is string && data.id.size() > 0 &&
-             data.userId is string && data.userId.size() > 0 &&
-             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
-             data.ingredients is list && data.ingredients.size() <= 50 &&
-             data.instructions is string && data.instructions.size() > 0 && data.instructions.size() <= 2000 &&
-             data.createdAt is string;
+    function isValidHistoryRecord() {
+      return hasRequiredFields(['createdAt', 'preferences', 'recipes', 'healthAdvice']) &&
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.preferences is map &&
+             request.resource.data.recipes is list &&
+             request.resource.data.healthAdvice is string;
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
+    function isValidRecipe() {
+      return hasRequiredFields(['title', 'description', 'cuisine', 'prepTime', 'cookTime', 'difficulty', 'calories', 'protein', 'carbs', 'fats', 'ingredients', 'instructions', 'matchReason', 'knowledgeGraph', 'tags']) &&
+             request.resource.data.title is string &&
+             request.resource.data.description is string &&
+             request.resource.data.cuisine is string &&
+             request.resource.data.prepTime is number &&
+             request.resource.data.cookTime is number &&
+             request.resource.data.difficulty is string &&
+             request.resource.data.calories is number &&
+             request.resource.data.protein is number &&
+             request.resource.data.carbs is number &&
+             request.resource.data.fats is number &&
+             request.resource.data.ingredients is list &&
+             request.resource.data.instructions is list &&
+             request.resource.data.matchReason is string &&
+             request.resource.data.knowledgeGraph is map &&
+             request.resource.data.tags is list &&
+             (!('allergens' in request.resource.data) || request.resource.data.allergens is list) &&
+             (!('authorUid' in request.resource.data) || request.resource.data.authorUid is string) &&
+             (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp);
+    }
 
     match /users/{userId} {
       allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data);
-      allow delete: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser();
+      allow update: if isOwner(userId) && isValidUser() && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
 
-      match /recipes/{recipeId} {
-        allow read: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidRecipe(request.resource.data);
-        allow update: if isOwner(userId) && isValidRecipe(request.resource.data) && uidNotModified(userId);
-        allow delete: if isOwner(userId);
-      }
+    match /users/{userId}/history/{historyId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidHistoryRecord();
+      allow update: if isOwner(userId) && isValidHistoryRecord() && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isOwner(userId);
+    }
+
+    match /recipes/{recipeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidRecipe();
+      allow update: if isAuthenticated() && isValidRecipe();
+      allow delete: if isAuthenticated();
     }
   }
 }

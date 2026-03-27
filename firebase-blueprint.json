@@ -2,38 +2,89 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "User profile information",
+      "description": "A registered user in the system.",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "description": "Firebase Auth UID" },
-        "phoneNumber": { "type": "string", "description": "User's phone number" },
-        "createdAt": { "type": "string", "format": "date", "description": "Account creation date" }
+        "phoneNumber": {
+          "type": "string",
+          "description": "The user's phone number."
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the user was created."
+        },
+        "height": {
+          "type": "number",
+          "description": "The user's height in cm."
+        },
+        "weight": {
+          "type": "number",
+          "description": "The user's weight in kg."
+        },
+        "bmi": {
+          "type": "number",
+          "description": "The user's Body Mass Index."
+        }
       },
-      "required": ["uid", "phoneNumber", "createdAt"]
+      "required": ["phoneNumber", "createdAt"]
     },
     "Recipe": {
       "title": "Recipe",
-      "description": "A saved recipe",
+      "description": "A recipe in the global library.",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Recipe ID" },
-        "userId": { "type": "string", "description": "Owner's User ID" },
-        "title": { "type": "string", "description": "Recipe title" },
-        "ingredients": { "type": "array", "description": "List of ingredients" },
-        "instructions": { "type": "string", "description": "Cooking instructions" },
-        "createdAt": { "type": "string", "format": "date", "description": "Creation date" }
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "cuisine": { "type": "string" },
+        "prepTime": { "type": "number" },
+        "cookTime": { "type": "number" },
+        "difficulty": { "type": "string" },
+        "calories": { "type": "number" },
+        "protein": { "type": "number" },
+        "carbs": { "type": "number" },
+        "fats": { "type": "number" },
+        "ingredients": { "type": "array" },
+        "instructions": { "type": "array" },
+        "matchReason": { "type": "string" },
+        "knowledgeGraph": { "type": "object" },
+        "authorUid": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "tags": { "type": "array" },
+        "allergens": { "type": "array" }
       },
-      "required": ["id", "userId", "title", "ingredients", "instructions", "createdAt"]
+      "required": ["title", "description", "cuisine", "prepTime", "cookTime", "difficulty", "calories", "protein", "carbs", "fats", "ingredients", "instructions", "matchReason", "knowledgeGraph", "tags"]
+    },
+    "HistoryRecord": {
+      "title": "History Record",
+      "description": "A record of user's generated recipes and health advice.",
+      "type": "object",
+      "properties": {
+        "createdAt": { "type": "timestamp" },
+        "preferences": { "type": "object" },
+        "recipes": { "type": "array" },
+        "healthAdvice": { "type": "string" }
+      },
+      "required": ["createdAt", "preferences", "recipes", "healthAdvice"]
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": { "$ref": "User" },
-      "description": "User profiles"
+    "users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profiles."
     },
-    "/users/{userId}/recipes/{recipeId}": {
-      "schema": { "$ref": "Recipe" },
-      "description": "User's saved recipes"
+    "users/{userId}/history/{historyId}": {
+      "schema": {
+        "$ref": "#/entities/HistoryRecord"
+      },
+      "description": "User's generation history."
+    },
+    "recipes/{recipeId}": {
+      "schema": {
+        "$ref": "#/entities/Recipe"
+      },
+      "description": "Global recipe library."
     }
   }
 }

@@ -1,11 +1,10 @@
-import * as d3 from 'd3';
-
 export interface UserPreferences {
   // 1. 基础生理参数
   gender: '男' | '女' | '其他';
   age: number;
   height: number; // cm
   weight: number; // kg
+  bmi?: number; // Added bmi
   activityLevel: '久坐' | '轻度活动' | '中度活动' | '重度活动' | '极重度活动';
   healthGoal: '减脂' | '增肌' | '维持现状' | '备孕' | '术后恢复' | '控制三高';
 
@@ -24,7 +23,6 @@ export interface UserPreferences {
   prepTimeLimit: number; // minutes
   diningContext: '自己做' | '点外卖' | '经常应酬';
   budget: '平价' | '适中' | '高端';
-  location?: string; // Added for location-based recommendations
 }
 
 export interface Ingredient {
@@ -32,15 +30,15 @@ export interface Ingredient {
   amount: string;
 }
 
-export interface KGNode extends d3.SimulationNodeDatum {
+export interface KGNode {
   id: string;
   label: string;
   type: 'Root' | 'Ingredient' | 'Effect' | 'BodyCondition' | 'LocationFactor';
 }
 
-export interface KGLink extends d3.SimulationLinkDatum<KGNode> {
-  source: string | KGNode;
-  target: string | KGNode;
+export interface KGLink {
+  source: string;
+  target: string;
   label: string;
 }
 
@@ -69,7 +67,6 @@ export interface Recipe {
   createdAt?: any; // Firestore Timestamp
   tags: string[];
   allergens?: string[]; // For strict exclusion
-  searchPrefs?: UserPreferences;
 }
 
 export interface UserProfile {
@@ -86,10 +83,18 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface HistoryRecord {
+  id?: string;
+  createdAt: any;
+  preferences: UserPreferences;
+  recipes: Recipe[];
+  healthAdvice: string;
+}
+
 export enum ViewState {
   FORM = 'FORM',
   LOADING = 'LOADING',
   RESULTS = 'RESULTS',
   ERROR = 'ERROR',
-  ANALYSIS = 'ANALYSIS'
+  HISTORY = 'HISTORY'
 }

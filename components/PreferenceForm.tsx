@@ -5,6 +5,7 @@ import { Sparkles, ArrowRight, Activity, MapPin } from './Icons';
 interface PreferenceFormProps {
   onSubmit: (prefs: UserPreferences) => void;
   isSubmitting: boolean;
+  initialPrefs?: Partial<UserPreferences>;
 }
 
 const ALLERGY_OPTIONS = ['花生', '坚果', '海鲜', '大豆', '鸡蛋', '牛奶', '小麦', '麸质', '乳糖'];
@@ -14,32 +15,30 @@ const DIET_TYPE_OPTIONS = ['无特殊', '全素', '蛋奶素', '生酮饮食', '
 const GOAL_OPTIONS = ['减脂', '增肌', '维持现状', '备孕', '术后恢复', '控制三高'];
 const ACTIVITY_OPTIONS = ['久坐', '轻度活动', '中度活动', '重度活动', '极重度活动'];
 
-const PreferenceForm: React.FC<PreferenceFormProps> = ({ onSubmit, isSubmitting }) => {
+const PreferenceForm: React.FC<PreferenceFormProps> = ({ onSubmit, isSubmitting, initialPrefs }) => {
   // 1. 基础生理参数
-  const [gender, setGender] = useState<'男' | '女' | '其他'>('男');
-  const [age, setAge] = useState<string>('');
-  const [height, setHeight] = useState<string>('');
-  const [weight, setWeight] = useState<string>('');
-  const [activityLevel, setActivityLevel] = useState<UserPreferences['activityLevel']>('轻度活动');
-  const [healthGoal, setHealthGoal] = useState<UserPreferences['healthGoal']>('维持现状');
+  const [gender, setGender] = useState<'男' | '女' | '其他'>(initialPrefs?.gender || '男');
+  const [age, setAge] = useState<string>(initialPrefs?.age?.toString() || '');
+  const [height, setHeight] = useState<string>(initialPrefs?.height?.toString() || '');
+  const [weight, setWeight] = useState<string>(initialPrefs?.weight?.toString() || '');
+  const [activityLevel, setActivityLevel] = useState<UserPreferences['activityLevel']>(initialPrefs?.activityLevel || '轻度活动');
+  const [healthGoal, setHealthGoal] = useState<UserPreferences['healthGoal']>(initialPrefs?.healthGoal || '维持现状');
 
   // 2. 健康状况与禁忌
-  const [allergies, setAllergies] = useState<string[]>([]);
-  const [chronicDiseases, setChronicDiseases] = useState<string[]>(['无']);
-  const [medications, setMedications] = useState<string>('');
+  const [allergies, setAllergies] = useState<string[]>(initialPrefs?.allergies || []);
+  const [chronicDiseases, setChronicDiseases] = useState<string[]>(initialPrefs?.chronicDiseases || ['无']);
+  const [medications, setMedications] = useState<string>(initialPrefs?.medications || '');
 
   // 3. 饮食习惯与偏好
-  const [flavorPreferences, setFlavorPreferences] = useState<string[]>([]);
-  const [dietType, setDietType] = useState<string>('无特殊');
-  const [dislikedFoodsInput, setDislikedFoodsInput] = useState<string>('');
+  const [flavorPreferences, setFlavorPreferences] = useState<string[]>(initialPrefs?.flavorPreferences || []);
+  const [dietType, setDietType] = useState<string>(initialPrefs?.dietType || '无特殊');
+  const [dislikedFoodsInput, setDislikedFoodsInput] = useState<string>(initialPrefs?.dislikedFoods?.join(', ') || '');
 
   // 4. 生活方式与场景
-  const [cookingSkill, setCookingSkill] = useState<UserPreferences['cookingSkill']>('偶尔做饭');
-  const [prepTimeLimit, setPrepTimeLimit] = useState<string>('30');
-  const [diningContext, setDiningContext] = useState<UserPreferences['diningContext']>('自己做');
-  const [budget, setBudget] = useState<UserPreferences['budget']>('适中');
-  const [location, setLocation] = useState<string>('');
-  const [isLocating, setIsLocating] = useState(false);
+  const [cookingSkill, setCookingSkill] = useState<UserPreferences['cookingSkill']>(initialPrefs?.cookingSkill || '偶尔做饭');
+  const [prepTimeLimit, setPrepTimeLimit] = useState<string>(initialPrefs?.prepTimeLimit?.toString() || '30');
+  const [diningContext, setDiningContext] = useState<UserPreferences['diningContext']>(initialPrefs?.diningContext || '自己做');
+  const [budget, setBudget] = useState<UserPreferences['budget']>(initialPrefs?.budget || '适中');
 
   const [bmi, setBmi] = useState<number | null>(null);
   const [bmiStatus, setBmiStatus] = useState<string>('');
@@ -78,35 +77,6 @@ const PreferenceForm: React.FC<PreferenceFormProps> = ({ onSubmit, isSubmitting 
     setList(newList);
   };
 
-  const handleGetLocation = () => {
-    if (!navigator.geolocation) {
-      alert('您的浏览器不支持地理定位');
-      return;
-    }
-    setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          // Use reverse geocoding or just coordinates
-          // For simplicity in this demo, we'll just use a placeholder or a simple string
-          // In a real app, you'd call a geocoding API
-          const { latitude, longitude } = position.coords;
-          setLocation(`经度: ${latitude.toFixed(2)}, 纬度: ${longitude.toFixed(2)}`);
-          // Optionally, we could try to get a city name if we had an API key for Google Maps etc.
-        } catch (err) {
-          console.error(err);
-        } finally {
-          setIsLocating(false);
-        }
-      },
-      (err) => {
-        console.error(err);
-        setIsLocating(false);
-        alert('无法获取位置，请手动输入');
-      }
-    );
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
@@ -114,6 +84,7 @@ const PreferenceForm: React.FC<PreferenceFormProps> = ({ onSubmit, isSubmitting 
       age: parseInt(age) || 30,
       height: parseFloat(height) || 170,
       weight: parseFloat(weight) || 65,
+      bmi: bmi || undefined,
       activityLevel,
       healthGoal,
       allergies,
@@ -125,8 +96,7 @@ const PreferenceForm: React.FC<PreferenceFormProps> = ({ onSubmit, isSubmitting 
       cookingSkill,
       prepTimeLimit: parseInt(prepTimeLimit) || 30,
       diningContext,
-      budget,
-      location
+      budget
     });
   };
 
@@ -311,30 +281,6 @@ const PreferenceForm: React.FC<PreferenceFormProps> = ({ onSubmit, isSubmitting 
                   <option value="适中">适中 (日常标准)</option>
                   <option value="高端">高端 (有机/进口食材)</option>
               </select>
-          </div>
-          <div className="space-y-2 md:col-span-2">
-              <label className="block text-sm font-semibold text-gray-700">当前位置 (用于推荐当地应季食材)</label>
-              <div className="flex gap-2">
-                <div className="relative flex-grow">
-                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input 
-                    type="text" 
-                    value={location} 
-                    onChange={(e) => setLocation(e.target.value)} 
-                    placeholder="例如：北京，或者点击右侧自动获取" 
-                    className="w-full p-3 pl-10 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none" 
-                  />
-                </div>
-                <button 
-                  type="button" 
-                  onClick={handleGetLocation}
-                  disabled={isLocating}
-                  className="px-4 py-2 bg-brand-50 text-brand-600 rounded-xl border border-brand-200 hover:bg-brand-100 transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
-                >
-                  <Activity className={`w-4 h-4 ${isLocating ? 'animate-pulse' : ''}`} />
-                  {isLocating ? '定位中...' : '自动定位'}
-                </button>
-              </div>
           </div>
         </div>
       </div>

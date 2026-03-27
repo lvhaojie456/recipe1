@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Activity, TrendingUp, AlertCircle, Heart, Loader2, ChevronLeft } from 'lucide-react';
 import { Recipe } from '../types';
-import { analyzeHealthTrends } from '../services/geminiService';
+import { analyzeHealthTrends } from '../services/siliconFlowService';
 import Markdown from 'react-markdown';
 
 interface HealthAnalysisProps {
@@ -110,7 +110,7 @@ const HealthAnalysis: React.FC<HealthAnalysisProps> = ({ history, onBack }) => {
         <div>
           <h4 className="text-emerald-900 font-bold mb-1">主厨寄语</h4>
           <p className="text-emerald-800 text-sm leading-relaxed">
-            这份报告是基于您输入的数据生成的 AI 洞察。虽然我们结合了营养学和中医智慧，但它不能替代专业的医疗诊断。如果您有严重的健康问题，请务必咨询医生。
+            这份报告是基于您输入的数据生成的 硅基流动 洞察。虽然我们结合了营养学和中医智慧，但它不能替代专业的医疗诊断。如果您有严重的健康问题，请务必咨询医生。
           </p>
         </div>
       </div>

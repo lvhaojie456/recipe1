@@ -1,59 +1,113 @@
 import React, { useState, useEffect } from 'react';
-import { ChefHat, Activity } from 'lucide-react';
+import { onAuthStateChanged, User, signOut } from 'firebase/auth';
+import { doc, getDoc, updateDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from './firebase';
+import { handleFirestoreError, OperationType } from './utils/firebaseUtils';
+import PhoneLogin from './components/PhoneLogin';
+import { ChefHat, Activity } from './components/Icons';
 import PreferenceForm from './components/PreferenceForm';
 import RecipeCard from './components/RecipeCard';
 import RecipeDetail from './components/RecipeDetail';
 import ChatWidget from './components/ChatWidget';
 import MenuAdjuster from './components/MenuAdjuster';
-import Login from './components/Login';
-import HealthAnalysis from './components/HealthAnalysis';
-import ApiSettings from './components/ApiSettings';
-import { Sliders } from './components/Icons';
-import { refineRecipes, setApiKey } from './services/geminiService';
+import HistoryView from './components/HistoryView';
+import { refineRecipes, generateHealthAdvice } from './services/geminiService'; // Import generateHealthAdvice
 import { generateAndSaveRecipes } from './services/recipeService';
-import { getHistoryRecipes } from './services/recipeService';
 import { UserPreferences, Recipe, ViewState } from './types';
-import { useAuth } from './services/authService';
 
 const App: React.FC = () => {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [viewState, setViewState] = useState<ViewState>(ViewState.FORM);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userPrefs, setUserPrefs] = useState<UserPreferences | undefined>(undefined);
-  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
+  const [initialPrefs, setInitialPrefs] = useState<Partial<UserPreferences> | undefined>(undefined);
+  const [currentAdvice, setCurrentAdvice] = useState<string | null>(null); // State for advice
   
-  const { user, loading, logout } = useAuth();
+  // State for the adjuster
+  const [isAdjusting, setIsAdjusting] = useState(false);
 
   useEffect(() => {
-    const checkApiKey = async () => {
-      if (!user) return;
-      try {
-        const response = await fetch(`/api/settings/apikey/${user.uid}`);
-        const contentType = response.headers.get("content-type");
-        if (response.ok && contentType && contentType.indexOf("application/json") !== -1) {
-          const data = await response.json();
-          if (data.apiKey) {
-            setApiKey(data.apiKey);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        try {
+          const userRef = doc(db, 'users', currentUser.uid);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            const data = userSnap.data();
+            if (data.height && data.weight) {
+              setInitialPrefs({
+                height: data.height,
+                weight: data.weight,
+                bmi: data.bmi
+              });
+            }
           }
+        } catch (err) {
+          console.error("Failed to fetch user profile", err);
         }
-      } catch (error) {
-        console.error("Failed to check API key", error);
       }
-    };
-    
-    if (user) {
-        checkApiKey();
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      handleStartOver();
+    } catch (error) {
+      console.error('Error logging out:', error);
     }
-  }, [user]);
+  };
 
   const handleFormSubmit = async (prefs: UserPreferences) => {
     setViewState(ViewState.LOADING);
     setError(null);
-    setUserPrefs(prefs);
+    setUserPrefs(prefs); // Save prefs for context
+    
+    // Save height, weight, bmi to Firestore
+    if (user) {
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        await updateDoc(userRef, {
+          height: prefs.height,
+          weight: prefs.weight,
+          bmi: prefs.bmi
+        });
+      } catch (err) {
+        console.error("Failed to update user profile", err);
+        // We don't block the recipe generation if this fails
+      }
+    }
+
     try {
+      // Use the new service that checks DB first, then generates
       const generatedRecipes = await generateAndSaveRecipes(prefs);
       setRecipes(generatedRecipes);
+      
+      // Generate advice and save history
+      if (user) {
+          try {
+              const advice = await generateHealthAdvice(prefs, generatedRecipes);
+              setCurrentAdvice(advice);
+              
+              const historyRef = collection(db, 'users', user.uid, 'history');
+              await addDoc(historyRef, {
+                  createdAt: serverTimestamp(),
+                  preferences: prefs,
+                  recipes: generatedRecipes,
+                  healthAdvice: advice
+              });
+          } catch (err) {
+              console.error("Failed to save history", err);
+          }
+      }
+
       setViewState(ViewState.RESULTS);
     } catch (err) {
       console.error("Failed to generate recipes:", err);
@@ -62,40 +116,20 @@ const App: React.FC = () => {
     }
   };
 
-  const handleViewHistory = async () => {
-    setViewState(ViewState.LOADING);
-    try {
-      const history = await getHistoryRecipes();
-      setRecipes(history);
-      setViewState(ViewState.RESULTS);
-    } catch (err) {
-      setError("无法加载历史食谱");
-      setViewState(ViewState.ERROR);
-    }
-  };
-
-  const handleShowAnalysis = async () => {
-    setViewState(ViewState.LOADING);
-    try {
-      const history = await getHistoryRecipes();
-      setRecipes(history);
-      setViewState(ViewState.ANALYSIS);
-    } catch (err) {
-      setError("无法加载分析数据");
-      setViewState(ViewState.ERROR);
-    }
-  };
-
   const handleMenuAdjustment = async (instruction: string) => {
       if (!userPrefs) return;
       
+      setIsAdjusting(true);
       try {
+          // Keep current view but update data
           const newRecipes = await refineRecipes(userPrefs, instruction);
           setRecipes(newRecipes);
       } catch (err) {
           console.error("Failed to refine", err);
           setError("调整失败，请稍后再试");
           setViewState(ViewState.ERROR);
+      } finally {
+          setIsAdjusting(false);
       }
   };
 
@@ -112,19 +146,25 @@ const App: React.FC = () => {
     setRecipes([]);
     setSelectedRecipe(null);
     setUserPrefs(undefined);
+    setCurrentAdvice(null);
     setViewState(ViewState.FORM);
+    setIsAdjusting(false);
   };
 
-  if (loading) {
+  const handleViewHistory = () => {
+    setViewState(ViewState.HISTORY);
+  };
+
+  if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-brand-50">
-        <div className="w-12 h-12 border-4 border-brand-200 border-t-brand-500 rounded-full animate-spin"></div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="w-16 h-16 border-4 border-brand-200 border-t-brand-500 rounded-full animate-spin"></div>
       </div>
     );
   }
 
   if (!user) {
-    return <Login />;
+    return <PhoneLogin />;
   }
 
   return (
@@ -144,21 +184,29 @@ const App: React.FC = () => {
             </span>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={() => setIsApiSettingsOpen(true)} className="text-sm font-medium text-gray-500 hover:text-brand-600 flex items-center gap-1">
-              <Sliders className="w-4 h-4" />
-              API 设置
-            </button>
-            <button onClick={handleViewHistory} className="text-sm font-medium text-gray-500 hover:text-brand-600">历史食谱</button>
-            <div className="h-4 w-px bg-gray-200"></div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400 hidden sm:inline">你好, {user.username}</span>
+            {viewState !== ViewState.HISTORY && (
               <button 
-                onClick={logout}
-                className="text-xs font-medium text-red-400 hover:text-red-600 transition-colors"
+                onClick={handleViewHistory}
+                className="text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors flex items-center gap-1"
               >
-                退出
+                <Activity className="w-4 h-4" />
+                健康档案
               </button>
-            </div>
+            )}
+            {viewState === ViewState.RESULTS && !selectedRecipe && (
+               <button 
+                  onClick={handleStartOver}
+                  className="text-sm font-medium text-gray-500 hover:text-brand-600 transition-colors"
+               >
+                  重新开始
+               </button>
+            )}
+            <button 
+              onClick={handleLogout}
+              className="text-sm font-medium text-red-500 hover:text-red-600 transition-colors"
+            >
+              退出登录
+            </button>
           </div>
         </div>
       </header>
@@ -169,7 +217,7 @@ const App: React.FC = () => {
         {/* VIEW: FORM */}
         {viewState === ViewState.FORM && (
           <div className="animate-in fade-in zoom-in duration-500">
-            <PreferenceForm onSubmit={handleFormSubmit} isSubmitting={false} />
+            <PreferenceForm onSubmit={handleFormSubmit} isSubmitting={false} initialPrefs={initialPrefs} />
           </div>
         )}
 
@@ -204,27 +252,38 @@ const App: React.FC = () => {
           </div>
         )}
 
+        {/* VIEW: HISTORY */}
+        {viewState === ViewState.HISTORY && (
+          <HistoryView onBack={handleStartOver} />
+        )}
+
         {/* VIEW: RESULTS LIST */}
         {viewState === ViewState.RESULTS && !selectedRecipe && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
             
             {/* The AI Adjuster Bar */}
-            <MenuAdjuster onAdjust={handleMenuAdjustment} isAdjusting={false} />
+            <MenuAdjuster onAdjust={handleMenuAdjustment} isAdjusting={isAdjusting} />
+
+            {/* Health Advice Banner */}
+            {currentAdvice && (
+              <div className="bg-gradient-to-r from-orange-50 to-brand-50 border border-brand-100 p-6 rounded-3xl shadow-sm mb-8">
+                <h3 className="text-sm font-bold text-brand-700 mb-2 flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  专属健康建议
+                </h3>
+                <p className="text-gray-700 text-sm leading-relaxed">
+                  {currentAdvice}
+                </p>
+              </div>
+            )}
 
             <div className="text-center space-y-2">
                 <h2 className="text-3xl font-bold text-gray-900">您的菜单</h2>
                 <p className="text-gray-500">根据您的偏好精心挑选。</p>
-                <button 
-                  onClick={handleShowAnalysis}
-                  className="mt-4 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full text-sm font-bold shadow-lg shadow-emerald-200 transition-all hover:scale-105 active:scale-95 flex items-center gap-2 mx-auto"
-                >
-                  <Activity className="w-4 h-4" />
-                  查看健康趋势分析
-                </button>
             </div>
             
-            {/* Recipes Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+            {/* Recipes Grid - Opacity transition during adjustment */}
+            <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 transition-opacity duration-300 ${isAdjusting ? 'opacity-50 pointer-events-none grayscale' : 'opacity-100'}`}>
               {recipes.map((recipe, index) => (
                 <RecipeCard 
                   key={index} 
@@ -245,14 +304,6 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* VIEW: ANALYSIS */}
-        {viewState === ViewState.ANALYSIS && (
-          <HealthAnalysis 
-            history={recipes} 
-            onBack={() => setViewState(ViewState.RESULTS)} 
-          />
-        )}
-
       </main>
 
       {/* Footer */}
@@ -262,9 +313,6 @@ const App: React.FC = () => {
 
       {/* Global Chat Widget */}
       <ChatWidget prefs={userPrefs} selectedRecipe={selectedRecipe} />
-
-      {/* API Settings Modal */}
-      <ApiSettings isOpen={isApiSettingsOpen} onClose={() => setIsApiSettingsOpen(false)} />
     </div>
   );
 };
