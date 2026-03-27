@@ -73,13 +73,13 @@ const ApiSettings: React.FC<ApiSettingsProps> = ({ isOpen, onClose }) => {
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-gray-800">设置 SiliconFlow API Key</h2>
+          <h2 className="text-xl font-bold text-gray-800">设置 API Key</h2>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
             <X />
           </button>
         </div>
         <p className="text-sm text-gray-500 mb-6 leading-relaxed">
-          本项目已切换至硅基流动 (SiliconFlow) 的 <span className="font-mono text-brand-600 bg-brand-50 px-1 rounded">deepseek-ai/DeepSeek-V3.2</span> 模型。请输入您的 API Key 以继续使用。您的 Key 将安全地保存在后台数据库中。
+          请输入您的 API Key 以继续使用。您的 Key 将安全地保存在后台数据库中。
         </p>
         <input
           type="password"

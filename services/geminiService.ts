@@ -1,7 +1,11 @@
 import { GoogleGenAI, Type, Chat } from "@google/genai";
 import { UserPreferences, Recipe } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+export const setApiKey = (key: string) => {
+    ai = new GoogleGenAI({ apiKey: key });
+};
 
 // Keep a reference to the chat session
 let chatSession: Chat | null = null;

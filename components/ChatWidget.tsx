@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, Send, X, Sparkles } from './Icons';
 import { ChatMessage, UserPreferences, Recipe } from '../types';
-import { chatWithChef } from '../services/siliconFlowService';
+import { chatWithChef } from '../services/geminiService';
 import Markdown from 'react-markdown';
 
 interface ChatWidgetProps {
@@ -13,7 +13,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ prefs, selectedRecipe }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'model', text: '你好！我是您的 硅基流动 私人大厨。有什么我可以帮您的吗？您可以问我关于食谱的细节、营养建议，或者如何根据您的健康状况调整饮食。', timestamp: Date.now() }
+    { role: 'model', text: '你好！我是您的私人大厨。有什么我可以帮您的吗？您可以问我关于食谱的细节、营养建议，或者如何根据您的健康状况调整饮食。', timestamp: Date.now() }
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -68,7 +68,7 @@ const ChatWidget: React.FC<ChatWidgetProps> = ({ prefs, selectedRecipe }) => {
               <Sparkles className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-bold">硅基流动 私人大厨</h3>
+              <h3 className="font-bold">私人大厨</h3>
               <p className="text-[10px] opacity-80">在线为您提供营养建议</p>
             </div>
           </div>

@@ -34,6 +34,10 @@ export interface KGNode {
   id: string;
   label: string;
   type: 'Root' | 'Ingredient' | 'Effect' | 'BodyCondition' | 'LocationFactor';
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
 }
 
 export interface KGLink {

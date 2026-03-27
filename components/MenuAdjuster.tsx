@@ -23,8 +23,8 @@ const MenuAdjuster: React.FC<MenuAdjusterProps> = ({ onAdjust, isAdjusting }) =>
           <Sliders className="w-5 h-5" />
         </div>
         <div>
-          <h3 className="font-bold text-gray-800">硅基流动 菜单微调</h3>
-          <p className="text-xs text-gray-500">对生成的食谱不满意？告诉 硅基流动 您的具体要求。</p>
+          <h3 className="font-bold text-gray-800">菜单微调</h3>
+          <p className="text-xs text-gray-500">对生成的食谱不满意？告诉我您的具体要求。</p>
         </div>
       </div>
 
